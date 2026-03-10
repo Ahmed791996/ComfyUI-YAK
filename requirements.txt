@@ -1,0 +1,9 @@
+# Optional — only needed for CorridorKeyLoadEXRSequence
+# Install one of the two options below:
+
+# Option A — official OpenEXR bindings (recommended)
+openexr
+imath
+
+# Option B — imageio with FreeImage plugin
+# imageio[freeimage]
