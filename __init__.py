@@ -1,27 +1,27 @@
 """
-CorridorKey — ComfyUI custom node package
-https://github.com/nikopueringer/CorridorKey
+YAK — ComfyUI custom nodes for CorridorKey green screen keying
+https://github.com/Ahmed791996/YAK-nodes
 """
 
 from .nodes import (
-    CorridorKeyCheckSetup,
-    CorridorKeyProcessClip,
-    CorridorKeyBatchProcess,
-    CorridorKeyLoadEXRSequence,
+    YAKCheckSetup,
+    MaskKey_Green,
+    YAKBatchProcess,
+    YAKLoadEXRSequence,
 )
 
 NODE_CLASS_MAPPINGS = {
-    "CorridorKeyCheckSetup":       CorridorKeyCheckSetup,
-    "CorridorKeyProcessClip":      CorridorKeyProcessClip,
-    "CorridorKeyBatchProcess":     CorridorKeyBatchProcess,
-    "CorridorKeyLoadEXRSequence":  CorridorKeyLoadEXRSequence,
+    "YAKCheckSetup":       YAKCheckSetup,
+    "MaskKey_Green":       MaskKey_Green,
+    "YAKBatchProcess":     YAKBatchProcess,
+    "YAKLoadEXRSequence":  YAKLoadEXRSequence,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "CorridorKeyCheckSetup":       "CK Check Setup",
-    "CorridorKeyProcessClip":      "CK Process Clip",
-    "CorridorKeyBatchProcess":     "CK Batch Process",
-    "CorridorKeyLoadEXRSequence":  "CK Load EXR Sequence",
+    "YAKCheckSetup":       "YAK Check Setup",
+    "MaskKey_Green":       "MaskKey Green",
+    "YAKBatchProcess":     "YAK Batch Process",
+    "YAKLoadEXRSequence":  "YAK Load EXR Sequence",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

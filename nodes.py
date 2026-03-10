@@ -1,5 +1,5 @@
 """
-CorridorKey — ComfyUI custom nodes
+YAK — ComfyUI custom nodes for CorridorKey green screen keying
 Wraps the CorridorKey neural-network green-screen keying CLI.
 https://github.com/nikopueringer/CorridorKey
 """
@@ -48,10 +48,10 @@ def _run(cmd: list, cwd: str, timeout: int = 7200) -> tuple[bool, str]:
 # Node 1 — CheckSetup
 # ─────────────────────────────────────────────────────────────────────────────
 
-class CorridorKeyCheckSetup:
+class YAKCheckSetup:
     """Verify a CorridorKey installation and report GPU / VRAM status."""
 
-    CATEGORY = "CorridorKey"
+    CATEGORY = "YAK"
     FUNCTION = "check"
     RETURN_TYPES = ("STRING", "BOOLEAN", "FLOAT", "STRING")
     RETURN_NAMES = ("status", "is_ready", "vram_gb", "gpu_name")
@@ -115,13 +115,13 @@ class CorridorKeyCheckSetup:
 # Node 2 — ProcessClip
 # ─────────────────────────────────────────────────────────────────────────────
 
-class CorridorKeyProcessClip:
+class MaskKey_Green:
     """
     Key a single video clip with CorridorKey.
     Outputs a 32-bit linear EXR sequence with clean alpha and un-premultiplied colour.
     """
 
-    CATEGORY = "CorridorKey"
+    CATEGORY = "YAK"
     FUNCTION = "process"
     RETURN_TYPES = ("STRING", "BOOLEAN", "STRING")
     RETURN_NAMES = ("output_folder", "success", "log")
@@ -198,13 +198,13 @@ class CorridorKeyProcessClip:
 # Node 3 — BatchProcess
 # ─────────────────────────────────────────────────────────────────────────────
 
-class CorridorKeyBatchProcess:
+class YAKBatchProcess:
     """
     Key multiple video clips in sequence.
     Clip paths are provided as a newline-separated string.
     """
 
-    CATEGORY = "CorridorKey"
+    CATEGORY = "YAK"
     FUNCTION = "batch"
     RETURN_TYPES = ("STRING", "STRING", "BOOLEAN")
     RETURN_NAMES = ("output_folders", "combined_log", "all_succeeded")
@@ -292,14 +292,14 @@ class CorridorKeyBatchProcess:
 # Node 4 — LoadEXRSequence
 # ─────────────────────────────────────────────────────────────────────────────
 
-class CorridorKeyLoadEXRSequence:
+class YAKLoadEXRSequence:
     """
     Load a folder of EXR frames output by CorridorKey into a ComfyUI IMAGE batch tensor.
     Requires OpenEXR + Imath  (pip install openexr imath)  OR  imageio[freeimage].
     Falls back to imageio if the openexr package is unavailable.
     """
 
-    CATEGORY = "CorridorKey"
+    CATEGORY = "YAK"
     FUNCTION = "load"
     RETURN_TYPES = ("IMAGE", "IMAGE", "INT")
     RETURN_NAMES = ("rgb", "alpha", "frame_count")
@@ -323,8 +323,6 @@ class CorridorKeyLoadEXRSequence:
                 }),
             }
         }
-
-    # ── EXR readers ───────────────────────────────────────────────────────────
 
     @staticmethod
     def _read_exr_openexr(path: str):
@@ -361,8 +359,6 @@ class CorridorKeyLoadEXRSequence:
             return self._read_exr_openexr(path)
         except ImportError:
             return self._read_exr_imageio(path)
-
-    # ── main ─────────────────────────────────────────────────────────────────
 
     def load(self, exr_folder: str, frame_limit: int = 0):
         files = sorted(_glob.glob(os.path.join(exr_folder, "*.exr")))
