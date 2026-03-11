@@ -244,8 +244,19 @@ class MaskKey_Green:
                 img  = np.array(Image.open(f).convert("RGBA")).astype(np.float32) / 255.0
                 rgba = img                              # (H,W,4)
 
-            rgb_frames.append(rgba[..., :3])
-            alpha_frames.append(np.repeat(rgba[..., 3:4], 3, axis=-1))
+            rgb  = rgba[..., :3]
+            alpha = rgba[..., 3:4]
+
+            # Apply sRGB gamma to linear EXR data so it displays correctly
+            if f.endswith(".exr"):
+                rgb   = np.clip(rgb,   0.0, 1.0) ** (1.0 / 2.2)
+                alpha = np.clip(alpha, 0.0, 1.0)
+            else:
+                rgb   = np.clip(rgb,   0.0, 1.0)
+                alpha = np.clip(alpha, 0.0, 1.0)
+
+            rgb_frames.append(rgb)
+            alpha_frames.append(np.repeat(alpha, 3, axis=-1))
 
         rgb_t   = torch.from_numpy(np.stack(rgb_frames,   axis=0))   # (N,H,W,3)
         alpha_t = torch.from_numpy(np.stack(alpha_frames, axis=0))   # (N,H,W,3)
