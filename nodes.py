@@ -119,14 +119,14 @@ class YAKCheckSetup:
 
 class MaskKey_Green:
     """
-    Key a single video clip with CorridorKey.
-    Outputs a 32-bit linear EXR sequence with clean alpha and un-premultiplied colour.
+    Key a single image or video clip with CorridorKey.
+    Returns rgb and alpha as IMAGE tensors (PNG-compatible) ready for any ComfyUI node.
     """
 
     CATEGORY = "YAK"
     FUNCTION = "process"
-    RETURN_TYPES = ("STRING", "BOOLEAN", "STRING")
-    RETURN_NAMES = ("output_folder", "success", "log")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "MASK", "BOOLEAN", "STRING")
+    RETURN_NAMES = ("rgb", "alpha", "mask", "success", "log")
     OUTPUT_NODE = True
 
     @classmethod
@@ -225,7 +225,54 @@ class MaskKey_Green:
             cmd += extra_args.strip().split()
 
         success, log = _run(cmd, cwd=ck_dir)
-        return (out_path if success else "", success, log)
+
+        if not success:
+            blank = torch.zeros(1, images.shape[1], images.shape[2], 3)
+            mask  = torch.zeros(1, images.shape[1], images.shape[2])
+            return (blank, blank, mask, False, log)
+
+        # Load output frames (EXR or PNG/JPG — whatever CorridorKey wrote)
+        exr_files = sorted(_glob.glob(os.path.join(out_path, "*.exr")))
+        png_files = sorted(_glob.glob(os.path.join(out_path, "*.png")))
+        files = exr_files if exr_files else png_files
+
+        rgb_frames, alpha_frames = [], []
+        for f in files:
+            if f.endswith(".exr"):
+                rgba = self._read_exr(f)               # (H,W,4) float32
+            else:
+                img  = np.array(Image.open(f).convert("RGBA")).astype(np.float32) / 255.0
+                rgba = img                              # (H,W,4)
+
+            rgb_frames.append(rgba[..., :3])
+            alpha_frames.append(np.repeat(rgba[..., 3:4], 3, axis=-1))
+
+        rgb_t   = torch.from_numpy(np.stack(rgb_frames,   axis=0))   # (N,H,W,3)
+        alpha_t = torch.from_numpy(np.stack(alpha_frames, axis=0))   # (N,H,W,3)
+        mask_t  = alpha_t[..., 0]                                     # (N,H,W)
+
+        return (rgb_t, alpha_t, mask_t, True, log)
+
+    @staticmethod
+    def _read_exr(path: str):
+        try:
+            import OpenEXR, Imath
+            exr = OpenEXR.InputFile(path)
+            dw  = exr.header()["dataWindow"]
+            W   = dw.max.x - dw.min.x + 1
+            H   = dw.max.y - dw.min.y + 1
+            pt  = Imath.PixelType(Imath.PixelType.FLOAT)
+            ch  = {c: np.frombuffer(exr.channel(c, pt), dtype=np.float32).reshape(H, W)
+                   for c in ("R", "G", "B", "A")}
+            return np.stack([ch["R"], ch["G"], ch["B"], ch["A"]], axis=-1)
+        except ImportError:
+            import imageio
+            img = imageio.imread(path, format="exr").astype(np.float32)
+            if img.ndim == 2:
+                img = np.stack([img]*3, axis=-1)
+            if img.shape[2] == 3:
+                img = np.concatenate([img, np.ones((*img.shape[:2], 1), np.float32)], axis=-1)
+            return img
 
 
 # ─────────────────────────────────────────────────────────────────────────────
