@@ -133,6 +133,9 @@ class MaskKey_Green:
     def INPUT_TYPES(cls):
         return {
             "required": {
+                "images": ("IMAGE", {
+                    "tooltip": "Connect an image or video frames from any ComfyUI node"
+                }),
                 "corridorkey_dir": ("STRING", {
                     "default": "/workspace/CorridorKey",
                     "multiline": False,
@@ -140,13 +143,10 @@ class MaskKey_Green:
                 }),
             },
             "optional": {
-                "images": ("IMAGE", {
-                    "tooltip": "Connect an image or video frames (IMAGE batch) from any ComfyUI node"
-                }),
                 "clip_path": ("STRING", {
                     "default": "",
                     "multiline": False,
-                    "tooltip": "OR provide an absolute path to a video file"
+                    "tooltip": "Override: provide a direct path to a video file instead"
                 }),
                 "output_dir": ("STRING", {
                     "default": "",
@@ -190,8 +190,8 @@ class MaskKey_Green:
 
     def process(
         self,
+        images: torch.Tensor,
         corridorkey_dir: str,
-        images: torch.Tensor = None,
         clip_path: str = "",
         output_dir: str = "",
         fps: int = 24,
@@ -207,11 +207,11 @@ class MaskKey_Green:
         if not os.path.isfile(cli):
             return ("", False, f"ERROR: corridorkey_cli.py missing in {ck_dir}")
 
-        # Resolve input — IMAGE tensor takes priority over clip_path
-        if images is not None:
+        # Resolve input — clip_path overrides images if provided
+        if clip_path and os.path.isfile(clip_path):
+            pass  # use clip_path as-is
+        else:
             clip_path = self._save_frames_as_video(images, fps)
-        elif not clip_path or not os.path.isfile(clip_path):
-            return ("", False, "ERROR: provide either an IMAGE input or a valid clip_path")
 
         out_path = output_dir.strip() if output_dir and output_dir.strip() else os.path.join(ck_dir, "Output")
         os.makedirs(out_path, exist_ok=True)
