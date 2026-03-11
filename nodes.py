@@ -9,9 +9,11 @@ import sys
 import subprocess
 import re
 import glob as _glob
+import tempfile
 
 import numpy as np
 import torch
+from PIL import Image
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,53 +133,85 @@ class MaskKey_Green:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "clip_path": ("STRING", {
-                    "default": "",
-                    "multiline": False,
-                    "tooltip": "Absolute path to the source video clip"
-                }),
                 "corridorkey_dir": ("STRING", {
-                    "default": "C:/CorridorKey",
+                    "default": "/workspace/CorridorKey",
                     "multiline": False,
                     "tooltip": "Root folder of your CorridorKey installation"
                 }),
             },
             "optional": {
+                "images": ("IMAGE", {
+                    "tooltip": "Connect an image or video frames (IMAGE batch) from any ComfyUI node"
+                }),
+                "clip_path": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "OR provide an absolute path to a video file"
+                }),
                 "output_dir": ("STRING", {
                     "default": "",
                     "multiline": False,
                     "tooltip": "Output folder (leave empty to use <corridorkey_dir>/Output)"
                 }),
+                "fps": ("INT", {
+                    "default": 24,
+                    "min": 1,
+                    "max": 120,
+                    "tooltip": "FPS used when saving IMAGE batch as a temp video"
+                }),
                 "use_gvm": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Enable Generative Video Matting for automatic alpha hint generation"
+                    "tooltip": "Enable Generative Video Matting"
                 }),
                 "extra_args": ("STRING", {
                     "default": "",
                     "multiline": False,
-                    "tooltip": "Any extra CLI flags to pass verbatim, e.g. --videomama"
+                    "tooltip": "Extra CLI flags, e.g. --videomama"
                 }),
             }
         }
 
+    def _save_frames_as_video(self, images: torch.Tensor, fps: int) -> str:
+        """Save IMAGE batch tensor (N,H,W,3) to a temp MP4, return path."""
+        tmp_dir = tempfile.mkdtemp(prefix="yak_frames_")
+        n = images.shape[0]
+        for i in range(n):
+            frame = (images[i].cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+            Image.fromarray(frame).save(os.path.join(tmp_dir, f"frame_{i:05d}.png"))
+
+        tmp_video = tempfile.mktemp(suffix=".mp4", prefix="yak_input_")
+        cmd = [
+            "ffmpeg", "-y", "-framerate", str(fps),
+            "-i", os.path.join(tmp_dir, "frame_%05d.png"),
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", tmp_video
+        ]
+        subprocess.run(cmd, capture_output=True)
+        return tmp_video
+
     def process(
         self,
-        clip_path: str,
         corridorkey_dir: str,
+        images: torch.Tensor = None,
+        clip_path: str = "",
         output_dir: str = "",
+        fps: int = 24,
         use_gvm: bool = False,
         extra_args: str = "",
     ):
         ck_dir = corridorkey_dir.rstrip("/\\")
 
-        if not os.path.isfile(clip_path):
-            return ("", False, f"ERROR: clip not found: {clip_path}")
         if not os.path.isdir(ck_dir):
             return ("", False, f"ERROR: corridorkey_dir not found: {ck_dir}")
 
         cli = os.path.join(ck_dir, "corridorkey_cli.py")
         if not os.path.isfile(cli):
             return ("", False, f"ERROR: corridorkey_cli.py missing in {ck_dir}")
+
+        # Resolve input — IMAGE tensor takes priority over clip_path
+        if images is not None:
+            clip_path = self._save_frames_as_video(images, fps)
+        elif not clip_path or not os.path.isfile(clip_path):
+            return ("", False, "ERROR: provide either an IMAGE input or a valid clip_path")
 
         out_path = output_dir.strip() if output_dir and output_dir.strip() else os.path.join(ck_dir, "Output")
         os.makedirs(out_path, exist_ok=True)
