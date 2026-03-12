@@ -200,13 +200,15 @@ class MaskKey_Green:
         extra_args: str = "",
     ):
         ck_dir = corridorkey_dir.rstrip("/\\")
+        blank = torch.zeros(1, images.shape[1], images.shape[2], 3)
+        mask  = torch.zeros(1, images.shape[1], images.shape[2])
 
         if not os.path.isdir(ck_dir):
-            return ("", False, f"ERROR: corridorkey_dir not found: {ck_dir}")
+            return (blank, blank, mask, False, f"ERROR: corridorkey_dir not found: {ck_dir}")
 
         cli = os.path.join(ck_dir, "corridorkey_cli.py")
         if not os.path.isfile(cli):
-            return ("", False, f"ERROR: corridorkey_cli.py missing in {ck_dir}")
+            return (blank, blank, mask, False, f"ERROR: corridorkey_cli.py missing in {ck_dir}")
 
         # Resolve input — clip_path overrides images if provided
         if clip_path and os.path.isfile(clip_path):
@@ -228,14 +230,15 @@ class MaskKey_Green:
         success, log = _run(cmd, cwd=ck_dir)
 
         if not success:
-            blank = torch.zeros(1, images.shape[1], images.shape[2], 3)
-            mask  = torch.zeros(1, images.shape[1], images.shape[2])
             return (blank, blank, mask, False, log)
 
         # Load output frames (EXR or PNG/JPG — whatever CorridorKey wrote)
         exr_files = sorted(_glob.glob(os.path.join(out_path, "*.exr")))
         png_files = sorted(_glob.glob(os.path.join(out_path, "*.png")))
         files = exr_files if exr_files else png_files
+
+        if not files:
+            return (blank, blank, mask, False, log + "\nERROR: no output frames found.")
 
         rgb_frames, alpha_frames = [], []
         for f in files:
