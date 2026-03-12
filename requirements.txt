@@ -7,3 +7,9 @@ imath
 
 # Option B — imageio with FreeImage plugin
 # imageio[freeimage]
+
+# Required for aiohttp server routes (YAK 3D Viewport)
+aiohttp
+
+# Required for World Labs API nodes
+requests

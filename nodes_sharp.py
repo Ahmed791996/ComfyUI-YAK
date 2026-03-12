@@ -1,0 +1,209 @@
+"""
+YAK — ml-sharp (Apple) node for single-image → 3D Gaussian Splatting.
+Wraps the `sharp` CLI: https://github.com/apple/ml-sharp
+"""
+
+import os
+import sys
+import json
+import glob as _glob
+import subprocess
+import tempfile
+
+import numpy as np
+import torch
+from PIL import Image
+
+
+def _find_sharp_python(sharp_dir: str) -> str:
+    """Return the conda/venv Python inside a ml-sharp installation."""
+    candidates = [
+        os.path.join(sharp_dir, ".venv", "Scripts", "python.exe"),
+        os.path.join(sharp_dir, ".venv", "bin", "python"),
+        os.path.join(sharp_dir, "venv", "Scripts", "python.exe"),
+        os.path.join(sharp_dir, "venv", "bin", "python"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return sys.executable
+
+
+class YAKSharpGenerate:
+    """
+    Generate 3D Gaussians from a single image using Apple ml-sharp.
+    Outputs a .ply splat file and shows it in an embedded 3D viewport.
+    """
+
+    CATEGORY = "YAK/Sharp"
+    FUNCTION = "generate"
+    RETURN_TYPES = ("STRING", "BOOLEAN", "STRING")
+    RETURN_NAMES = ("ply_path", "success", "log")
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE", {
+                    "tooltip": "Input image to generate 3D Gaussians from"
+                }),
+            },
+            "optional": {
+                "sharp_dir": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Root folder of your ml-sharp installation (leave empty to use 'sharp' from PATH)"
+                }),
+                "output_dir": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Output folder for .ply files (default: temp directory)"
+                }),
+                "device": (["auto", "cuda", "mps", "cpu"], {
+                    "default": "auto",
+                    "tooltip": "Device for inference"
+                }),
+                "render_video": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Also render a trajectory video (CUDA only, requires gsplat)"
+                }),
+                "checkpoint": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Custom checkpoint path (auto-downloads default if empty)"
+                }),
+            },
+        }
+
+    def generate(
+        self,
+        image: torch.Tensor,
+        sharp_dir: str = "",
+        output_dir: str = "",
+        device: str = "auto",
+        render_video: bool = False,
+        checkpoint: str = "",
+    ):
+        # Save input image to temp file
+        frame = (image[0].cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+        tmp_input = tempfile.mktemp(suffix=".png", prefix="yak_sharp_in_")
+        Image.fromarray(frame).save(tmp_input)
+
+        # Resolve output directory
+        if output_dir and output_dir.strip():
+            out_path = output_dir.strip()
+        else:
+            out_path = tempfile.mkdtemp(prefix="yak_sharp_out_")
+        os.makedirs(out_path, exist_ok=True)
+
+        # Build command
+        if sharp_dir and sharp_dir.strip() and os.path.isdir(sharp_dir.strip()):
+            python = _find_sharp_python(sharp_dir.strip())
+            cmd = [python, "-m", "sharp", "predict"]
+        else:
+            cmd = ["sharp", "predict"]
+
+        cmd += ["-i", tmp_input, "-o", out_path]
+
+        if device != "auto":
+            cmd += ["--device", device]
+
+        if render_video:
+            cmd.append("--render")
+        else:
+            cmd.append("--no-render")
+
+        if checkpoint and checkpoint.strip() and os.path.isfile(checkpoint.strip()):
+            cmd += ["-c", checkpoint.strip()]
+
+        # Run ml-sharp
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=sharp_dir.strip() if sharp_dir and sharp_dir.strip() else None,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            log = result.stdout + result.stderr
+            success = result.returncode == 0
+        except FileNotFoundError:
+            log = (
+                "ERROR: 'sharp' command not found. "
+                "Install ml-sharp (pip install -r requirements.txt from the ml-sharp repo) "
+                "or provide the sharp_dir path."
+            )
+            success = False
+        except subprocess.TimeoutExpired:
+            log = "ERROR: ml-sharp timed out after 5 minutes."
+            success = False
+        except Exception as e:
+            log = f"ERROR: {e}"
+            success = False
+
+        # Find output .ply file
+        ply_files = sorted(_glob.glob(os.path.join(out_path, "**", "*.ply"), recursive=True))
+        ply_path = ply_files[0] if ply_files else ""
+
+        if success and not ply_path:
+            log += "\nWARNING: inference succeeded but no .ply file found in output."
+            success = False
+
+        # Build viewport data for the embedded viewer
+        viewport_data = {
+            "meshes": [],
+            "splats": [ply_path] if ply_path else [],
+            "bg_color": "#1a1a1a",
+            "grid": True,
+        }
+
+        return {
+            "ui": {"viewport_data": [json.dumps(viewport_data)]},
+            "result": (ply_path, success, log),
+        }
+
+
+class YAKSharpViewer:
+    """
+    View a .ply Gaussian splat file generated by ml-sharp in a 3D viewport.
+    """
+
+    CATEGORY = "YAK/Sharp"
+    FUNCTION = "view"
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "ply_path": ("STRING", {
+                    "default": "",
+                    "multiline": False,
+                    "tooltip": "Path to .ply Gaussian splat file"
+                }),
+            },
+            "optional": {
+                "bg_color": ("STRING", {
+                    "default": "#1a1a1a",
+                    "multiline": False,
+                    "tooltip": "Viewport background colour (hex)"
+                }),
+                "grid": ("BOOLEAN", {"default": True}),
+            },
+        }
+
+    def view(self, ply_path: str, bg_color: str = "#1a1a1a", grid: bool = True):
+        splats = []
+        if ply_path and ply_path.strip() and os.path.isfile(ply_path.strip()):
+            splats.append(os.path.normpath(ply_path.strip()))
+
+        viewport_data = {
+            "meshes": [],
+            "splats": splats,
+            "bg_color": bg_color,
+            "grid": grid,
+        }
+
+        return {"ui": {"viewport_data": [json.dumps(viewport_data)]}, "result": ()}

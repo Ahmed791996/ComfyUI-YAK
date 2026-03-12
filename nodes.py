@@ -10,6 +10,7 @@ import subprocess
 import re
 import glob as _glob
 import tempfile
+import json
 
 import numpy as np
 import torch
@@ -468,3 +469,86 @@ class YAKLoadEXRSequence:
             np.repeat(batch[..., 3:4], 3, axis=-1)   # broadcast alpha → (N,H,W,3)
         )
         return (rgb_t, alpha_t, len(files))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Node 5 — 3D Viewport
+# ─────────────────────────────────────────────────────────────────────────────
+
+MESH_EXTENSIONS = {".glb", ".gltf", ".obj", ".fbx"}
+SPLAT_EXTENSIONS = {".ply", ".splat", ".spz"}
+
+
+def _validate_path(path: str, allowed_exts: set) -> str | None:
+    """Return normalised path if valid and has an allowed extension, else None."""
+    if not path or not path.strip():
+        return None
+    path = os.path.normpath(path.strip())
+    if not os.path.isfile(path):
+        return None
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in allowed_exts:
+        return None
+    return path
+
+
+class YAK3DViewport:
+    """
+    Interactive 3D viewport that displays up to 3 meshes and 3 Gaussian splats.
+    Supports .glb/.gltf/.obj/.fbx meshes and .ply/.splat/.spz splats.
+    """
+
+    CATEGORY = "YAK/3D"
+    FUNCTION = "view"
+    RETURN_TYPES = ()
+    OUTPUT_NODE = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        mesh_opts = {"default": "", "multiline": False, "tooltip": "Path to .glb/.gltf/.obj/.fbx"}
+        splat_opts = {"default": "", "multiline": False, "tooltip": "Path to .ply/.splat/.spz"}
+        return {
+            "required": {},
+            "optional": {
+                "mesh_1": ("STRING", {**mesh_opts}),
+                "mesh_2": ("STRING", {**mesh_opts}),
+                "mesh_3": ("STRING", {**mesh_opts}),
+                "splat_1": ("STRING", {**splat_opts}),
+                "splat_2": ("STRING", {**splat_opts}),
+                "splat_3": ("STRING", {**splat_opts}),
+                "bg_color": ("STRING", {
+                    "default": "#1a1a1a",
+                    "multiline": False,
+                    "tooltip": "Viewport background colour (hex)"
+                }),
+                "grid": ("BOOLEAN", {"default": True, "tooltip": "Show ground grid"}),
+            },
+        }
+
+    def view(
+        self,
+        mesh_1="", mesh_2="", mesh_3="",
+        splat_1="", splat_2="", splat_3="",
+        bg_color="#1a1a1a",
+        grid=True,
+    ):
+        meshes = []
+        for p in (mesh_1, mesh_2, mesh_3):
+            valid = _validate_path(p, MESH_EXTENSIONS)
+            if valid:
+                meshes.append(valid)
+
+        splats = []
+        for p in (splat_1, splat_2, splat_3):
+            valid = _validate_path(p, SPLAT_EXTENSIONS)
+            if valid:
+                splats.append(valid)
+
+        viewport_data = {
+            "meshes": meshes,
+            "splats": splats,
+            "bg_color": bg_color,
+            "grid": grid,
+        }
+
+        return {"ui": {"viewport_data": [json.dumps(viewport_data)]}, "result": ()}
