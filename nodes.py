@@ -216,7 +216,11 @@ class MaskKey_Green:
         else:
             clip_path = self._save_frames_as_video(images, fps)
 
-        out_path = output_dir.strip() if output_dir and output_dir.strip() else os.path.join(ck_dir, "Output")
+        # Use a unique temp output dir to avoid stale files from previous runs
+        if output_dir and output_dir.strip():
+            out_path = output_dir.strip()
+        else:
+            out_path = tempfile.mkdtemp(prefix="yak_ck_out_")
         os.makedirs(out_path, exist_ok=True)
 
         python = _find_python(ck_dir)
@@ -232,13 +236,17 @@ class MaskKey_Green:
         if not success:
             return (blank, blank, mask, False, log)
 
-        # Load output frames (EXR or PNG/JPG — whatever CorridorKey wrote)
-        exr_files = sorted(_glob.glob(os.path.join(out_path, "*.exr")))
-        png_files = sorted(_glob.glob(os.path.join(out_path, "*.png")))
+        # Search recursively for output frames (CorridorKey may create subdirectories)
+        exr_files = sorted(_glob.glob(os.path.join(out_path, "**", "*.exr"), recursive=True))
+        png_files = sorted(_glob.glob(os.path.join(out_path, "**", "*.png"), recursive=True))
         files = exr_files if exr_files else png_files
 
         if not files:
-            return (blank, blank, mask, False, log + "\nERROR: no output frames found.")
+            return (blank, blank, mask, False,
+                    log + f"\nERROR: no output frames found in {out_path}")
+
+        # Get original input as numpy for compositing (if CorridorKey only gives alpha)
+        input_rgb = images[0].cpu().numpy()  # (H,W,3) float32 0-1
 
         rgb_frames, alpha_frames = [], []
         for f in files:
@@ -259,6 +267,18 @@ class MaskKey_Green:
                 rgb   = np.clip(rgb,   0.0, 1.0)
                 alpha = np.clip(alpha, 0.0, 1.0)
 
+            # If RGB is near-black but alpha has data, CorridorKey only output
+            # the matte — composite the original image with the alpha mask
+            rgb_mean = np.mean(rgb)
+            alpha_mean = np.mean(alpha)
+            if rgb_mean < 0.01 and alpha_mean > 0.01:
+                # Use original input RGB masked by the extracted alpha
+                h, w = rgb.shape[:2]
+                ih, iw = input_rgb.shape[:2]
+                if h == ih and w == iw:
+                    rgb = input_rgb * alpha
+                    log += "\nINFO: RGB was empty, composited original image with alpha."
+
             rgb_frames.append(rgb)
             alpha_frames.append(np.repeat(alpha, 3, axis=-1))
 
@@ -277,15 +297,37 @@ class MaskKey_Green:
             W   = dw.max.x - dw.min.x + 1
             H   = dw.max.y - dw.min.y + 1
             pt  = Imath.PixelType(Imath.PixelType.FLOAT)
-            ch  = {c: np.frombuffer(exr.channel(c, pt), dtype=np.float32).reshape(H, W)
-                   for c in ("R", "G", "B", "A")}
-            return np.stack([ch["R"], ch["G"], ch["B"], ch["A"]], axis=-1)
+
+            # Read available channels — handle missing R/G/B/A gracefully
+            available = list(exr.header()["channels"].keys())
+            zeros = np.zeros((H, W), dtype=np.float32)
+            ones  = np.ones((H, W), dtype=np.float32)
+
+            def read_ch(name, default):
+                if name in available:
+                    return np.frombuffer(exr.channel(name, pt), dtype=np.float32).reshape(H, W)
+                return default
+
+            r = read_ch("R", zeros)
+            g = read_ch("G", zeros)
+            b = read_ch("B", zeros)
+            a = read_ch("A", ones)
+
+            # If only Y (luminance) channel exists, use it as grayscale alpha
+            if "Y" in available and "R" not in available:
+                y = np.frombuffer(exr.channel("Y", pt), dtype=np.float32).reshape(H, W)
+                a = y
+                r = g = b = zeros
+
+            return np.stack([r, g, b, a], axis=-1)
         except ImportError:
             import imageio
             img = imageio.imread(path, format="exr").astype(np.float32)
             if img.ndim == 2:
-                img = np.stack([img]*3, axis=-1)
-            if img.shape[2] == 3:
+                # Single channel EXR — treat as alpha/matte
+                alpha = img
+                img = np.stack([np.zeros_like(alpha)]*3 + [alpha], axis=-1)
+            elif img.shape[2] == 3:
                 img = np.concatenate([img, np.ones((*img.shape[:2], 1), np.float32)], axis=-1)
             return img
 
