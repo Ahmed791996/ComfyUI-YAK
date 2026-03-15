@@ -138,7 +138,7 @@ class MaskKey_Green:
                     "tooltip": "Connect an image or video frames from any ComfyUI node"
                 }),
                 "corridorkey_dir": ("STRING", {
-                    "default": "/workspace/CorridorKey",
+                    "default": "C:/CorridorKey",
                     "multiline": False,
                     "tooltip": "Root folder of your CorridorKey installation"
                 }),
@@ -245,11 +245,11 @@ class MaskKey_Green:
             return (blank, blank, mask, False,
                     log + f"\nERROR: no output frames found in {out_path}")
 
-        # Get original input as numpy for compositing (if CorridorKey only gives alpha)
-        input_rgb = images[0].cpu().numpy()  # (H,W,3) float32 0-1
+        # Get original input frames as numpy for compositing (if CorridorKey only gives alpha)
+        input_np = images.cpu().numpy()  # (N,H,W,3) float32 0-1
 
         rgb_frames, alpha_frames = [], []
-        for f in files:
+        for idx, f in enumerate(files):
             if f.endswith(".exr"):
                 rgba = self._read_exr(f)               # (H,W,4) float32
             else:
@@ -272,12 +272,15 @@ class MaskKey_Green:
             rgb_mean = np.mean(rgb)
             alpha_mean = np.mean(alpha)
             if rgb_mean < 0.01 and alpha_mean > 0.01:
-                # Use original input RGB masked by the extracted alpha
+                # Use matching input frame (or first frame as fallback)
+                frame_idx = min(idx, input_np.shape[0] - 1)
+                input_rgb = input_np[frame_idx]
                 h, w = rgb.shape[:2]
                 ih, iw = input_rgb.shape[:2]
                 if h == ih and w == iw:
                     rgb = input_rgb * alpha
-                    log += "\nINFO: RGB was empty, composited original image with alpha."
+                    if idx == 0:
+                        log += "\nINFO: RGB was empty, composited original frames with alpha."
 
             rgb_frames.append(rgb)
             alpha_frames.append(np.repeat(alpha, 3, axis=-1))
@@ -322,7 +325,10 @@ class MaskKey_Green:
             return np.stack([r, g, b, a], axis=-1)
         except ImportError:
             import imageio
-            img = imageio.imread(path, format="exr").astype(np.float32)
+            try:
+                img = imageio.imread(path, plugin="freeimage").astype(np.float32)
+            except Exception:
+                img = imageio.imread(path, format="exr").astype(np.float32)
             if img.ndim == 2:
                 # Single channel EXR — treat as alpha/matte
                 alpha = img
@@ -472,25 +478,45 @@ class YAKLoadEXRSequence:
         W    = dw.max.x - dw.min.x + 1
         H    = dw.max.y - dw.min.y + 1
         pt   = Imath.PixelType(Imath.PixelType.FLOAT)
-        chans = {}
-        for ch in ("R", "G", "B", "A"):
-            raw = exr.channel(ch, pt)
-            chans[ch] = np.frombuffer(raw, dtype=np.float32).reshape(H, W)
-        rgba = np.stack([chans["R"], chans["G"], chans["B"], chans["A"]], axis=-1)
-        return rgba
+
+        available = list(exr.header()["channels"].keys())
+        zeros = np.zeros((H, W), dtype=np.float32)
+        ones  = np.ones((H, W), dtype=np.float32)
+
+        def read_ch(name, default):
+            if name in available:
+                return np.frombuffer(exr.channel(name, pt), dtype=np.float32).reshape(H, W)
+            return default
+
+        r = read_ch("R", zeros)
+        g = read_ch("G", zeros)
+        b = read_ch("B", zeros)
+        a = read_ch("A", ones)
+
+        # If only Y (luminance) channel exists, treat as alpha matte
+        if "Y" in available and "R" not in available:
+            y = np.frombuffer(exr.channel("Y", pt), dtype=np.float32).reshape(H, W)
+            a = y
+            r = g = b = zeros
+
+        return np.stack([r, g, b, a], axis=-1)
 
     @staticmethod
     def _read_exr_imageio(path: str):
         """Read one EXR frame via imageio (freeimage plugin). Returns (H,W,4) float32."""
         import imageio
-        img = imageio.imread(path, format="exr")
+        try:
+            img = imageio.imread(path, plugin="freeimage").astype(np.float32)
+        except Exception:
+            img = imageio.imread(path, format="exr").astype(np.float32)
         if img.ndim == 2:
-            img = np.stack([img] * 3, axis=-1)
-        if img.shape[2] == 3:
+            alpha = img
+            img = np.stack([np.zeros_like(alpha)] * 3 + [alpha], axis=-1)
+        elif img.shape[2] == 3:
             h, w = img.shape[:2]
             alpha = np.ones((h, w, 1), dtype=np.float32)
             img = np.concatenate([img, alpha], axis=-1)
-        return img.astype(np.float32)
+        return img
 
     def _read_exr(self, path: str):
         try:

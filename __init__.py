@@ -1,5 +1,5 @@
 """
-YAK — ComfyUI custom nodes: CorridorKey keying, ml-sharp 3D, World Labs generation, 3D viewport
+YAK — ComfyUI custom nodes: CorridorKey keying, MatAnyone matting, ml-sharp 3D, World Labs generation, 3D viewport
 https://github.com/Ahmed791996/ComfyUI-YAK
 """
 
@@ -17,6 +17,10 @@ from .nodes_sharp import (
 from .nodes_worldlabs import (
     YAKWorldLabsGenerate,
     YAKWorldLabsViewer,
+)
+from .nodes_matanyone import (
+    YAKMatAnyoneGenerate,
+    YAKMatAnyoneCheckSetup,
 )
 
 # Register /yak/viewfile route on import
@@ -36,6 +40,9 @@ NODE_CLASS_MAPPINGS = {
     # World Labs
     "YAKWorldLabsGenerate":  YAKWorldLabsGenerate,
     "YAKWorldLabsViewer":    YAKWorldLabsViewer,
+    # MatAnyone
+    "YAKMatAnyoneGenerate":     YAKMatAnyoneGenerate,
+    "YAKMatAnyoneCheckSetup":   YAKMatAnyoneCheckSetup,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -52,6 +59,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # World Labs
     "YAKWorldLabsGenerate":  "YAK World Labs Generate",
     "YAKWorldLabsViewer":    "YAK World Labs Viewer",
+    # MatAnyone
+    "YAKMatAnyoneGenerate":     "YAK MatAnyone Generate",
+    "YAKMatAnyoneCheckSetup":   "YAK MatAnyone Check Setup",
 }
 
 WEB_DIRECTORY = "./web"
