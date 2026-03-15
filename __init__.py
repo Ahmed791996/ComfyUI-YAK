@@ -22,6 +22,9 @@ from .nodes_matanyone import (
     YAKMatAnyoneGenerate,
     YAKMatAnyoneCheckSetup,
 )
+from .nodes_rmbg import (
+    YAKBackgroundRemove,
+)
 
 # Register /yak/viewfile route on import
 from . import server_routes  # noqa: F401
@@ -43,6 +46,8 @@ NODE_CLASS_MAPPINGS = {
     # MatAnyone
     "YAKMatAnyoneGenerate":     YAKMatAnyoneGenerate,
     "YAKMatAnyoneCheckSetup":   YAKMatAnyoneCheckSetup,
+    # Background Remove
+    "YAKBackgroundRemove":      YAKBackgroundRemove,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -62,6 +67,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # MatAnyone
     "YAKMatAnyoneGenerate":     "YAK MatAnyone Generate",
     "YAKMatAnyoneCheckSetup":   "YAK MatAnyone Check Setup",
+    # Background Remove
+    "YAKBackgroundRemove":      "YAK Background Remove",
 }
 
 WEB_DIRECTORY = "./web"
