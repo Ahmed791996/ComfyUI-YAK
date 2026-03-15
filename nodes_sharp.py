@@ -4,7 +4,6 @@ Wraps the `sharp` CLI: https://github.com/apple/ml-sharp
 """
 
 import os
-import sys
 import json
 import glob as _glob
 import subprocess
@@ -13,20 +12,6 @@ import tempfile
 import numpy as np
 import torch
 from PIL import Image
-
-
-def _find_sharp_python(sharp_dir: str) -> str:
-    """Return the conda/venv Python inside a ml-sharp installation."""
-    candidates = [
-        os.path.join(sharp_dir, ".venv", "Scripts", "python.exe"),
-        os.path.join(sharp_dir, ".venv", "bin", "python"),
-        os.path.join(sharp_dir, "venv", "Scripts", "python.exe"),
-        os.path.join(sharp_dir, "venv", "bin", "python"),
-    ]
-    for c in candidates:
-        if os.path.isfile(c):
-            return c
-    return sys.executable
 
 
 class YAKSharpGenerate:
@@ -50,11 +35,6 @@ class YAKSharpGenerate:
                 }),
             },
             "optional": {
-                "sharp_dir": ("STRING", {
-                    "default": "",
-                    "multiline": False,
-                    "tooltip": "Root folder of your ml-sharp installation (leave empty to use 'sharp' from PATH)"
-                }),
                 "output_dir": ("STRING", {
                     "default": "",
                     "multiline": False,
@@ -79,7 +59,6 @@ class YAKSharpGenerate:
     def generate(
         self,
         image: torch.Tensor,
-        sharp_dir: str = "",
         output_dir: str = "",
         device: str = "auto",
         render_video: bool = False,
@@ -97,14 +76,8 @@ class YAKSharpGenerate:
             out_path = tempfile.mkdtemp(prefix="yak_sharp_out_")
         os.makedirs(out_path, exist_ok=True)
 
-        # Build command
-        if sharp_dir and sharp_dir.strip() and os.path.isdir(sharp_dir.strip()):
-            python = _find_sharp_python(sharp_dir.strip())
-            cmd = [python, "-m", "sharp", "predict"]
-        else:
-            cmd = ["sharp", "predict"]
-
-        cmd += ["-i", tmp_input, "-o", out_path]
+        # Build command — sharp is pip-installed via requirements.txt
+        cmd = ["sharp", "predict", "-i", tmp_input, "-o", out_path]
 
         if device != "auto":
             cmd += ["--device", device]
@@ -121,7 +94,6 @@ class YAKSharpGenerate:
         try:
             result = subprocess.run(
                 cmd,
-                cwd=sharp_dir.strip() if sharp_dir and sharp_dir.strip() else None,
                 capture_output=True,
                 text=True,
                 timeout=300,
@@ -130,9 +102,9 @@ class YAKSharpGenerate:
             success = result.returncode == 0
         except FileNotFoundError:
             log = (
-                "ERROR: 'sharp' command not found. "
-                "Install ml-sharp (pip install -r requirements.txt from the ml-sharp repo) "
-                "or provide the sharp_dir path."
+                "ERROR: 'sharp' command not found.\n"
+                "Install with: pip install -r requirements.txt\n"
+                "Or: pip install git+https://github.com/apple/ml-sharp.git"
             )
             success = False
         except subprocess.TimeoutExpired:

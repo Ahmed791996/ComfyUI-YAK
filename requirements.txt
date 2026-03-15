@@ -14,6 +14,9 @@ aiohttp
 # Required for World Labs API nodes
 requests
 
+# ml-sharp: single-image to 3D Gaussian Splatting (Apple)
+sharp @ git+https://github.com/apple/ml-sharp.git
+
 # MatAnyone video matting (inference-only deps, skips GUI/C-extension bloat)
 matanyone @ git+https://github.com/pq-yang/MatAnyone.git
 thinplate @ git+https://github.com/cheind/py-thin-plate-spline.git
