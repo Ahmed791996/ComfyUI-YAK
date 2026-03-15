@@ -80,6 +80,57 @@ class YAKMatAnyoneGenerate:
             },
         }
 
+    @staticmethod
+    def _auto_mask(first_frame: torch.Tensor, h: int, w: int) -> torch.Tensor:
+        """Auto-generate a foreground mask from the first frame using a segmentation model."""
+        try:
+            from transformers import pipeline
+            segmenter = pipeline(
+                "image-segmentation",
+                model="briaai/RMBG-1.4",
+                trust_remote_code=True,
+            )
+            # Convert tensor (H,W,3) float 0-1 → PIL
+            frame_np = (first_frame.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+            pil_img = Image.fromarray(frame_np)
+            result = segmenter(pil_img)
+            # result is a list of dicts with 'mask' PIL images
+            # Combine all non-background masks
+            combined = np.zeros((h, w), dtype=np.float32)
+            for item in result:
+                mask_arr = np.array(item["mask"].resize((w, h), Image.BILINEAR)).astype(np.float32)
+                if mask_arr.max() > 1:
+                    mask_arr = mask_arr / 255.0
+                combined = np.maximum(combined, mask_arr)
+            return torch.from_numpy(combined).unsqueeze(0)  # (1,H,W)
+        except Exception:
+            pass
+
+        try:
+            from transformers import AutoModelForImageSegmentation
+            import torchvision.transforms.functional as TF
+            model = AutoModelForImageSegmentation.from_pretrained(
+                "briaai/RMBG-2.0", trust_remote_code=True
+            )
+            model.eval()
+            # Preprocess
+            frame_pil = Image.fromarray(
+                (first_frame.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+            )
+            input_tensor = TF.to_tensor(frame_pil.resize((1024, 1024))).unsqueeze(0)
+            with torch.no_grad():
+                pred = model(input_tensor)[-1].sigmoid()
+            mask = pred[0, 0].cpu().numpy()
+            mask = np.array(
+                Image.fromarray((mask * 255).astype(np.uint8)).resize((w, h), Image.BILINEAR)
+            ).astype(np.float32) / 255.0
+            return torch.from_numpy(mask).unsqueeze(0)
+        except Exception:
+            pass
+
+        # Fallback: full white mask
+        return torch.ones(1, h, w)
+
     def generate(
         self,
         images: torch.Tensor,
@@ -95,9 +146,9 @@ class YAKMatAnyoneGenerate:
         blank = torch.zeros(1, h, w, 3)
         mask_blank = torch.zeros(1, h, w)
 
-        # Default to full-white mask if none provided
+        # Auto-generate mask if none provided using segmentation model
         if first_frame_mask is None:
-            first_frame_mask = torch.ones(1, h, w)
+            first_frame_mask = self._auto_mask(images[0], h, w)
 
         try:
             from matanyone import InferenceCore
