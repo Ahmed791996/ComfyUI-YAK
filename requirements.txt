@@ -14,13 +14,12 @@ aiohttp
 # Required for World Labs API nodes
 requests
 
-# Optional — only needed for MatAnyone nodes
-# Install MatAnyone from: https://github.com/pq-yang/MatAnyone
-# cd MatAnyone && pip install -e .
-# Or install dependencies individually:
-# numpy>=1.21
-# opencv-python>=4.8
-# scipy>=1.7
-# einops>=0.6
-# huggingface_hub
-# safetensors
+# MatAnyone video matting (inference-only deps, skips GUI/C-extension bloat)
+matanyone @ git+https://github.com/pq-yang/MatAnyone.git
+thinplate @ git+https://github.com/cheind/py-thin-plate-spline.git
+omegaconf
+easydict
+hickle
+easing_functions
+imageio==2.25.0
+imageio[ffmpeg]
