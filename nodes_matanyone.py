@@ -82,13 +82,13 @@ class YAKMatAnyoneGenerate:
 
     @staticmethod
     def _auto_mask(first_frame: torch.Tensor, h: int, w: int) -> torch.Tensor:
-        """Auto-generate a foreground mask from the first frame using BiRefNet."""
+        """Auto-generate a foreground mask from the first frame using RMBG-2.0."""
         try:
             from transformers import AutoModelForImageSegmentation
             from torchvision.transforms.functional import normalize
 
             model = AutoModelForImageSegmentation.from_pretrained(
-                "ZhengPeng7/BiRefNet", trust_remote_code=True
+                "briaai/RMBG-2.0", trust_remote_code=True
             )
             model.eval()
 

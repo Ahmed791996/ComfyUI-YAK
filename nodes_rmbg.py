@@ -1,5 +1,5 @@
 """
-YAK — Background Remove node using BiRefNet (state-of-the-art).
+YAK — Background Remove node using RMBG-2.0 (briaai).
 Fast, high-quality background removal — no mask input needed.
 """
 
@@ -20,7 +20,7 @@ MODEL_SIZE = 1024
 
 class YAKBackgroundRemove:
     """
-    Remove background from images using BiRefNet.
+    Remove background from images using RMBG-2.0.
     Works on any image — no green screen or mask needed.
     Model auto-downloads from HuggingFace on first run.
     """
@@ -62,7 +62,7 @@ class YAKBackgroundRemove:
 
         from transformers import AutoModelForImageSegmentation
         model = AutoModelForImageSegmentation.from_pretrained(
-            "ZhengPeng7/BiRefNet", trust_remote_code=True
+            "briaai/RMBG-2.0", trust_remote_code=True
         )
         model.to(device)
         model.eval()
@@ -100,7 +100,7 @@ class YAKBackgroundRemove:
 
         try:
             model = self._load_model(dev)
-            log_lines.append("BiRefNet model loaded")
+            log_lines.append("RMBG-2.0 model loaded")
         except Exception as e:
             return (blank, blank, mask_blank, False, f"ERROR loading model: {e}")
 
