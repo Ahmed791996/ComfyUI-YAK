@@ -1,6 +1,6 @@
 """
-YAK — Background Remove node using briaai/RMBG-1.4.
-Fast, single-image background removal — no mask input needed.
+YAK — Background Remove node using BiRefNet (state-of-the-art).
+Fast, high-quality background removal — no mask input needed.
 """
 
 import numpy as np
@@ -15,10 +15,12 @@ BACKGROUND_COLORS = {
     "black":   np.array([0.0, 0.0, 0.0], dtype=np.float32),
 }
 
+MODEL_SIZE = 1024
+
 
 class YAKBackgroundRemove:
     """
-    Remove background from images using RMBG-1.4.
+    Remove background from images using BiRefNet.
     Works on any image — no green screen or mask needed.
     Model auto-downloads from HuggingFace on first run.
     """
@@ -28,6 +30,9 @@ class YAKBackgroundRemove:
     RETURN_TYPES = ("IMAGE", "IMAGE", "MASK", "BOOLEAN", "STRING")
     RETURN_NAMES = ("foreground", "alpha", "mask", "success", "log")
     OUTPUT_NODE = True
+
+    _model = None
+    _device = None
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -42,35 +47,60 @@ class YAKBackgroundRemove:
                     "default": "green",
                     "tooltip": "Background color for the foreground composite"
                 }),
+                "device": (["auto", "cuda", "cpu"], {
+                    "default": "auto",
+                    "tooltip": "Device for inference"
+                }),
             },
         }
+
+    @classmethod
+    def _load_model(cls, device: str):
+        """Load BiRefNet model, cached across runs."""
+        if cls._model is not None and cls._device == device:
+            return cls._model
+
+        from transformers import AutoModelForImageSegmentation
+        model = AutoModelForImageSegmentation.from_pretrained(
+            "ZhengPeng7/BiRefNet", trust_remote_code=True
+        )
+        model.to(device)
+        model.eval()
+        cls._model = model
+        cls._device = device
+        return model
 
     def remove(
         self,
         images: torch.Tensor,
         background: str = "green",
+        device: str = "auto",
     ):
         h, w = images.shape[1], images.shape[2]
         n_frames = images.shape[0]
         blank = torch.zeros(1, h, w, 3)
         mask_blank = torch.zeros(1, h, w)
 
+        # Resolve device
+        if device == "auto":
+            if torch.cuda.is_available():
+                dev = "cuda"
+            else:
+                dev = "cpu"
+        else:
+            dev = device
+
+        log_lines = [f"Device: {dev}"]
+
         try:
-            from transformers import pipeline
+            from torchvision.transforms.functional import normalize
         except ImportError:
             return (blank, blank, mask_blank, False,
-                    "ERROR: transformers not installed.\n"
-                    "Install with: pip install transformers")
-
-        log_lines = []
+                    "ERROR: torchvision not installed.")
 
         try:
-            segmenter = pipeline(
-                "image-segmentation",
-                model="briaai/RMBG-1.4",
-                trust_remote_code=True,
-            )
-            log_lines.append("RMBG-1.4 model loaded")
+            model = self._load_model(dev)
+            log_lines.append("BiRefNet model loaded")
         except Exception as e:
             return (blank, blank, mask_blank, False, f"ERROR loading model: {e}")
 
@@ -80,41 +110,49 @@ class YAKBackgroundRemove:
         fgr_list = []
         alpha_list = []
 
-        for i in range(n_frames):
-            frame_np = (images[i].cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
-            pil_img = Image.fromarray(frame_np)
+        try:
+            for i in range(n_frames):
+                frame_np = (images[i].cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+                pil_img = Image.fromarray(frame_np)
 
-            try:
-                result = segmenter(pil_img)
+                # Preprocess: resize to model size, normalize
+                input_img = pil_img.resize((MODEL_SIZE, MODEL_SIZE), Image.BILINEAR)
+                input_tensor = torch.from_numpy(
+                    np.array(input_img).astype(np.float32) / 255.0
+                ).permute(2, 0, 1).unsqueeze(0)  # (1,3,H,W)
 
-                # Combine all masks
-                combined = np.zeros((h, w), dtype=np.float32)
-                for item in result:
-                    mask_pil = item["mask"]
-                    if mask_pil.size != (w, h):
-                        mask_pil = mask_pil.resize((w, h), Image.BILINEAR)
-                    mask_arr = np.array(mask_pil).astype(np.float32)
-                    if mask_arr.max() > 1:
-                        mask_arr = mask_arr / 255.0
-                    combined = np.maximum(combined, mask_arr)
+                input_tensor = normalize(
+                    input_tensor, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+                ).to(dev)
+
+                # Inference
+                with torch.no_grad():
+                    preds = model(input_tensor)[-1].sigmoid().cpu()
+
+                # Post-process: resize mask back to original
+                pred = preds[0, 0].numpy()  # (MODEL_SIZE, MODEL_SIZE)
+                mask_pil = Image.fromarray((pred * 255).astype(np.uint8), mode="L")
+                mask_pil = mask_pil.resize((w, h), Image.BILINEAR)
+                alpha = np.array(mask_pil).astype(np.float32) / 255.0  # (H,W)
 
                 # Composite
                 frame_f = images[i].cpu().numpy()  # (H,W,3) float 0-1
-                a = combined[:, :, np.newaxis]      # (H,W,1)
+                a = alpha[:, :, np.newaxis]
                 fgr = frame_f * a + bg_color * (1.0 - a)
 
                 fgr_list.append(np.clip(fgr, 0, 1))
-                alpha_list.append(np.clip(combined, 0, 1))
+                alpha_list.append(np.clip(alpha, 0, 1))
 
-            except Exception as e:
-                log_lines.append(f"ERROR on frame {i}: {e}")
-                fgr_list.append(np.zeros((h, w, 3), dtype=np.float32))
-                alpha_list.append(np.zeros((h, w), dtype=np.float32))
+                if (i + 1) % 10 == 0:
+                    log_lines.append(f"Processed {i + 1}/{n_frames}")
 
-            if (i + 1) % 10 == 0:
-                log_lines.append(f"Processed {i + 1}/{n_frames}")
+            log_lines.append(f"Done: {n_frames} frames")
 
-        log_lines.append(f"Done: {n_frames} frames")
+        except Exception as e:
+            log_lines.append(f"ERROR: {e}")
+            import traceback
+            log_lines.append(traceback.format_exc())
+            return (blank, blank, mask_blank, False, "\n".join(log_lines))
 
         fgr_stack = np.stack(fgr_list, axis=0)
         alpha_stack = np.stack(alpha_list, axis=0)

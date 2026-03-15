@@ -82,49 +82,34 @@ class YAKMatAnyoneGenerate:
 
     @staticmethod
     def _auto_mask(first_frame: torch.Tensor, h: int, w: int) -> torch.Tensor:
-        """Auto-generate a foreground mask from the first frame using a segmentation model."""
-        try:
-            from transformers import pipeline
-            segmenter = pipeline(
-                "image-segmentation",
-                model="briaai/RMBG-1.4",
-                trust_remote_code=True,
-            )
-            # Convert tensor (H,W,3) float 0-1 → PIL
-            frame_np = (first_frame.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
-            pil_img = Image.fromarray(frame_np)
-            result = segmenter(pil_img)
-            # result is a list of dicts with 'mask' PIL images
-            # Combine all non-background masks
-            combined = np.zeros((h, w), dtype=np.float32)
-            for item in result:
-                mask_arr = np.array(item["mask"].resize((w, h), Image.BILINEAR)).astype(np.float32)
-                if mask_arr.max() > 1:
-                    mask_arr = mask_arr / 255.0
-                combined = np.maximum(combined, mask_arr)
-            return torch.from_numpy(combined).unsqueeze(0)  # (1,H,W)
-        except Exception:
-            pass
-
+        """Auto-generate a foreground mask from the first frame using BiRefNet."""
         try:
             from transformers import AutoModelForImageSegmentation
-            import torchvision.transforms.functional as TF
+            from torchvision.transforms.functional import normalize
+
             model = AutoModelForImageSegmentation.from_pretrained(
-                "briaai/RMBG-2.0", trust_remote_code=True
+                "ZhengPeng7/BiRefNet", trust_remote_code=True
             )
             model.eval()
-            # Preprocess
-            frame_pil = Image.fromarray(
-                (first_frame.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+
+            frame_np = (first_frame.cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+            pil_img = Image.fromarray(frame_np).resize((1024, 1024), Image.BILINEAR)
+
+            input_tensor = torch.from_numpy(
+                np.array(pil_img).astype(np.float32) / 255.0
+            ).permute(2, 0, 1).unsqueeze(0)
+            input_tensor = normalize(
+                input_tensor, [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
             )
-            input_tensor = TF.to_tensor(frame_pil.resize((1024, 1024))).unsqueeze(0)
+
             with torch.no_grad():
                 pred = model(input_tensor)[-1].sigmoid()
+
             mask = pred[0, 0].cpu().numpy()
-            mask = np.array(
-                Image.fromarray((mask * 255).astype(np.uint8)).resize((w, h), Image.BILINEAR)
-            ).astype(np.float32) / 255.0
-            return torch.from_numpy(mask).unsqueeze(0)
+            mask_pil = Image.fromarray((mask * 255).astype(np.uint8), mode="L")
+            mask_pil = mask_pil.resize((w, h), Image.BILINEAR)
+            mask_np = np.array(mask_pil).astype(np.float32) / 255.0
+            return torch.from_numpy(mask_np).unsqueeze(0)
         except Exception:
             pass
 
