@@ -10,18 +10,26 @@ import numpy as np
 import torch
 from PIL import Image
 
+BACKGROUND_COLORS = {
+    "green":   np.array([0.0, 1.0, 0.0], dtype=np.float32),
+    "blue":    np.array([0.0, 0.0, 1.0], dtype=np.float32),
+    "red":     np.array([1.0, 0.0, 0.0], dtype=np.float32),
+    "white":   np.array([1.0, 1.0, 1.0], dtype=np.float32),
+    "black":   np.array([0.0, 0.0, 0.0], dtype=np.float32),
+}
+
 
 class YAKMatAnyoneGenerate:
     """
     Video matting using MatAnyone (CVPR 2025).
     Takes video frames + an optional first-frame mask, returns per-frame alpha
-    mattes, foreground composites, and green-screen composites.
+    mattes and foreground composited over the chosen background color.
     """
 
     CATEGORY = "YAK/MatAnyone"
     FUNCTION = "generate"
-    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "MASK", "BOOLEAN", "STRING")
-    RETURN_NAMES = ("foreground", "green_screen", "alpha", "mask", "success", "log")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "MASK", "BOOLEAN", "STRING")
+    RETURN_NAMES = ("foreground", "alpha", "mask", "success", "log")
     OUTPUT_NODE = True
 
     @classmethod
@@ -36,6 +44,10 @@ class YAKMatAnyoneGenerate:
                 "first_frame_mask": ("MASK", {
                     "tooltip": "Binary mask for the target object on the first frame "
                                "(if omitted, uses full-white mask — entire frame is foreground)"
+                }),
+                "background": (list(BACKGROUND_COLORS.keys()), {
+                    "default": "green",
+                    "tooltip": "Background color for the foreground composite"
                 }),
                 "n_warmup": ("INT", {
                     "default": 10,
@@ -72,6 +84,7 @@ class YAKMatAnyoneGenerate:
         self,
         images: torch.Tensor,
         first_frame_mask: torch.Tensor = None,
+        background: str = "green",
         n_warmup: int = 10,
         r_erode: int = 10,
         r_dilate: int = 10,
@@ -80,8 +93,6 @@ class YAKMatAnyoneGenerate:
     ):
         h, w = images.shape[1], images.shape[2]
         blank = torch.zeros(1, h, w, 3)
-        blank_green = torch.zeros(1, h, w, 3)
-        blank_green[..., 1] = 1.0
         mask_blank = torch.zeros(1, h, w)
 
         # Default to full-white mask if none provided
@@ -93,7 +104,7 @@ class YAKMatAnyoneGenerate:
             from matanyone.utils.device import safe_autocast
             from matanyone.utils.inference_utils import gen_dilate, gen_erosion
         except ImportError:
-            return (blank, blank_green, blank, mask_blank, False,
+            return (blank, blank, mask_blank, False,
                     "ERROR: matanyone package not found.\n"
                     "Install ComfyUI-YAK requirements: pip install -r requirements.txt")
 
@@ -163,11 +174,11 @@ class YAKMatAnyoneGenerate:
             all_frames = frames
         total_len = all_frames.shape[0]
 
-        green_bg = np.array([0.0, 1.0, 0.0], dtype=np.float32).reshape(1, 1, 3)
+        bg_color = BACKGROUND_COLORS.get(background, BACKGROUND_COLORS["green"])
+        bg_color = bg_color.reshape(1, 1, 3)
 
         alpha_list = []
         fgr_list = []
-        green_list = []
 
         try:
             with torch.inference_mode(), safe_autocast():
@@ -195,16 +206,12 @@ class YAKMatAnyoneGenerate:
                     # Get original frame as numpy (H,W,3) 0-1
                     frame_np = all_frames[ti].permute(1, 2, 0).cpu().numpy()
 
-                    # Foreground composite (over black)
+                    # Composite foreground over chosen background
                     pha_3ch = pha_np[:, :, np.newaxis]
-                    fgr_np = frame_np * pha_3ch
-
-                    # Green screen composite
-                    green_np = frame_np * pha_3ch + green_bg * (1.0 - pha_3ch)
+                    fgr_np = frame_np * pha_3ch + bg_color * (1.0 - pha_3ch)
 
                     alpha_list.append(pha_np)
                     fgr_list.append(fgr_np)
-                    green_list.append(green_np)
 
                     idx = ti - n_warmup
                     if (idx + 1) % 50 == 0:
@@ -217,12 +224,11 @@ class YAKMatAnyoneGenerate:
             log_lines.append(f"ERROR during inference: {e}")
             import traceback
             log_lines.append(traceback.format_exc())
-            return (blank, blank_green, blank, mask_blank, False, "\n".join(log_lines))
+            return (blank, blank, mask_blank, False, "\n".join(log_lines))
 
         # Stack results
         alpha_stack = np.stack(alpha_list, axis=0)  # (N,H',W')
         fgr_stack = np.stack(fgr_list, axis=0)      # (N,H',W',3)
-        green_stack = np.stack(green_list, axis=0)   # (N,H',W',3)
 
         # Resize back to original if needed
         if resize_needed:
@@ -238,20 +244,13 @@ class YAKMatAnyoneGenerate:
             ).permute(0, 2, 3, 1)
             fgr_stack = fgr_t.numpy()
 
-            green_t = torch.from_numpy(green_stack).permute(0, 3, 1, 2).float()
-            green_t = torch.nn.functional.interpolate(
-                green_t, size=(h, w), mode="bilinear", align_corners=False
-            ).permute(0, 2, 3, 1)
-            green_stack = green_t.numpy()
-
         # Convert to ComfyUI tensors
         fgr_out = torch.from_numpy(fgr_stack).float().clamp(0, 1)
-        green_out = torch.from_numpy(green_stack).float().clamp(0, 1)
         alpha_3ch = np.repeat(np.expand_dims(alpha_stack, -1), 3, axis=-1)
         alpha_out = torch.from_numpy(alpha_3ch).float().clamp(0, 1)
         mask_out = torch.from_numpy(alpha_stack).float().clamp(0, 1)
 
-        return (fgr_out, green_out, alpha_out, mask_out, True, "\n".join(log_lines))
+        return (fgr_out, alpha_out, mask_out, True, "\n".join(log_lines))
 
 
 class YAKMatAnyoneCheckSetup:
