@@ -39,8 +39,8 @@ class YAKMatAnyoneGenerate:
 
     CATEGORY = "YAK/MatAnyone"
     FUNCTION = "generate"
-    RETURN_TYPES = ("IMAGE", "IMAGE", "MASK", "BOOLEAN", "STRING")
-    RETURN_NAMES = ("foreground", "alpha", "mask", "success", "log")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "IMAGE", "MASK", "BOOLEAN", "STRING")
+    RETURN_NAMES = ("foreground", "green_screen", "alpha", "mask", "success", "log")
     OUTPUT_NODE = True
 
     @classmethod
@@ -354,6 +354,7 @@ class YAKMatAnyoneGenerate:
     ):
         blank = torch.zeros(1, images.shape[1], images.shape[2], 3)
         mask_blank = torch.zeros(1, images.shape[1], images.shape[2])
+        blank_green = blank.clone()
 
         if use_python_api:
             fgr_np, alpha_np, success, log = self._run_python_api(
@@ -367,14 +368,21 @@ class YAKMatAnyoneGenerate:
             )
 
         if not success or fgr_np is None:
-            return (blank, blank, mask_blank, False, log)
+            return (blank, blank_green, blank, mask_blank, False, log)
 
         fgr_t = torch.from_numpy(fgr_np).float().clamp(0, 1)       # (N,H,W,3)
         alpha_3ch = np.repeat(np.expand_dims(alpha_np, -1), 3, axis=-1)
         alpha_t = torch.from_numpy(alpha_3ch).float().clamp(0, 1)   # (N,H,W,3)
         mask_t = torch.from_numpy(alpha_np).float().clamp(0, 1)     # (N,H,W)
 
-        return (fgr_t, alpha_t, mask_t, success, log)
+        # Green screen composite: foreground over green background
+        green_bg = np.zeros_like(fgr_np)
+        green_bg[..., 1] = 1.0  # pure green
+        alpha_1ch = np.expand_dims(alpha_np, -1)  # (N,H,W,1)
+        green_np = fgr_np + green_bg * (1.0 - alpha_1ch)
+        green_t = torch.from_numpy(green_np).float().clamp(0, 1)
+
+        return (fgr_t, green_t, alpha_t, mask_t, success, log)
 
 
 class YAKMatAnyoneCheckSetup:
