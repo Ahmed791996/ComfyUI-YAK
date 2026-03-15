@@ -8,11 +8,21 @@ imath
 # Option B — imageio with FreeImage plugin
 # imageio[freeimage]
 
+# CorridorKey green screen keying
+corridorkey @ git+https://github.com/nikopueringer/CorridorKey.git
+timm
+typer
+rich
+kornia
+
 # Required for aiohttp server routes (YAK 3D Viewport)
 aiohttp
 
 # Required for World Labs API nodes
 requests
+
+# Auto background removal (used by MatAnyone auto-mask)
+transformers
 
 # ml-sharp: single-image to 3D Gaussian Splatting (Apple)
 sharp @ git+https://github.com/apple/ml-sharp.git
