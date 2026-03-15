@@ -50,11 +50,11 @@ class YAKMatAnyoneGenerate:
                 "images": ("IMAGE", {
                     "tooltip": "Video frames as IMAGE batch (N,H,W,3)"
                 }),
-                "first_frame_mask": ("MASK", {
-                    "tooltip": "Binary mask for the target object on the first frame"
-                }),
             },
             "optional": {
+                "first_frame_mask": ("MASK", {
+                    "tooltip": "Binary mask for the target object on the first frame (if omitted, uses full-white mask — entire frame is foreground)"
+                }),
                 "matanyone_dir": ("STRING", {
                     "default": "",
                     "multiline": False,
@@ -343,7 +343,7 @@ class YAKMatAnyoneGenerate:
     def generate(
         self,
         images: torch.Tensor,
-        first_frame_mask: torch.Tensor,
+        first_frame_mask: torch.Tensor = None,
         matanyone_dir: str = "",
         n_warmup: int = 10,
         r_erode: int = 10,
@@ -355,6 +355,10 @@ class YAKMatAnyoneGenerate:
         blank = torch.zeros(1, images.shape[1], images.shape[2], 3)
         mask_blank = torch.zeros(1, images.shape[1], images.shape[2])
         blank_green = blank.clone()
+
+        # Default to full-white mask if none provided
+        if first_frame_mask is None:
+            first_frame_mask = torch.ones(1, images.shape[1], images.shape[2])
 
         if use_python_api:
             fgr_np, alpha_np, success, log = self._run_python_api(
