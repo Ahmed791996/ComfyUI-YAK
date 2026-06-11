@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>YAK Plane Rotate</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a1a; }
+  #viewport { width: 100%; height: 100%; display: block; }
+  #toolbar {
+    position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; flex-wrap: wrap;
+    font: 11px/1 sans-serif;
+  }
+  #toolbar button {
+    background: #2a2a2a; color: #ddd; border: 1px solid #3a3a3a; border-radius: 4px;
+    padding: 5px 9px; cursor: pointer; user-select: none;
+  }
+  #toolbar button:hover { background: #353535; }
+  #toolbar button.active { background: #4a6; border-color: #5b7; color: #fff; }
+  #status {
+    position: absolute; bottom: 8px; left: 8px;
+    color: #888; font: 11px/1.4 monospace; pointer-events: none; user-select: none;
+  }
+  #empty-msg {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    color: #555; font: 13px/1.4 sans-serif; text-align: center;
+    pointer-events: none; user-select: none;
+  }
+</style>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<canvas id="viewport"></canvas>
+<div id="toolbar">
+  <button id="btn-rotate" class="active" title="Rotate the plane (R)">Rotate</button>
+  <button id="btn-reset" title="Reset rotation">Reset</button>
+  <button id="btn-x" title="Snap +90° on X">X 90°</button>
+  <button id="btn-y" title="Snap +90° on Y">Y 90°</button>
+  <button id="btn-z" title="Snap +90° on Z">Z 90°</button>
+</div>
+<div id="status">no image — connect an image and queue</div>
+<div id="empty-msg">Connect an image input and queue once to load it onto the plane</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
+
+// ── Camera framing ───────────────────────────────────────────────────────────
+// The plane is 1 unit tall (width = aspect). The camera looks down -Z from a
+// distance chosen so the un-rotated plane exactly fills the frame height. Because
+// the capture render uses the image's aspect ratio, an un-rotated plane renders
+// back to the original image 1:1.
+const FOV = 50;                                   // vertical FOV (deg)
+const DIST = 0.5 / Math.tan((FOV * Math.PI / 180) / 2);
+
+let renderer, scene, camera, orbit, gizmo;
+let plane = null;
+let texture = null;
+let imgW = 0, imgH = 0;
+let captureTimer = null;
+
+const statusEl = document.getElementById('status');
+const emptyEl = document.getElementById('empty-msg');
+
+function init() {
+  const canvas = document.getElementById('viewport');
+
+  renderer = new THREE.WebGLRenderer({
+    canvas, antialias: true, alpha: true, preserveDrawingBuffer: true,
+  });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+  scene = new THREE.Scene();
+
+  camera = new THREE.PerspectiveCamera(FOV, window.innerWidth / window.innerHeight, 0.01, 100);
+  camera.position.set(0, 0, DIST);
+  camera.lookAt(0, 0, 0);
+
+  // Orbit to inspect; disabled while dragging the rotate gizmo.
+  orbit = new OrbitControls(camera, canvas);
+  orbit.enableDamping = true;
+  orbit.dampingFactor = 0.1;
+  orbit.target.set(0, 0, 0);
+  orbit.update();
+
+  // Rotate gizmo on the plane.
+  gizmo = new TransformControls(camera, canvas);
+  gizmo.setMode('rotate');
+  gizmo.setSpace('local');
+  gizmo.addEventListener('dragging-changed', (e) => { orbit.enabled = !e.value; });
+  gizmo.addEventListener('objectChange', scheduleCapture);
+  const gizmoHelper = gizmo.getHelper ? gizmo.getHelper() : gizmo;
+  scene.add(gizmoHelper);
+
+  window.addEventListener('resize', onResize);
+  animate();
+}
+
+function onResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  orbit.update();
+  renderer.render(scene, camera);
+}
+
+// ── Build / update the plane ──────────────────────────────────────────────────
+function setTexture(url, w, h) {
+  imgW = w; imgH = h;
+  const aspect = w / h;
+
+  new THREE.TextureLoader().load(url, (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+    if (texture) texture.dispose();
+    texture = tex;
+
+    const keepRot = plane ? plane.rotation.clone() : null;
+    if (plane) {
+      gizmo.detach();
+      scene.remove(plane);
+      plane.geometry.dispose();
+      plane.material.dispose();
+    }
+
+    const geo = new THREE.PlaneGeometry(aspect, 1);
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, side: THREE.DoubleSide,
+    });
+    plane = new THREE.Mesh(geo, mat);
+    if (keepRot) plane.rotation.copy(keepRot);
+    scene.add(plane);
+    gizmo.attach(plane);
+
+    emptyEl.style.display = 'none';
+    statusEl.textContent = `${w}×${h} — drag the ring to rotate`;
+    scheduleCapture();
+  }, undefined, (err) => {
+    console.error('YAK Plane: texture load failed', err);
+    statusEl.textContent = 'failed to load image';
+  });
+}
+
+// ── Capture: render at the image's native resolution and send it back ─────────
+function scheduleCapture() {
+  if (captureTimer) clearTimeout(captureTimer);
+  captureTimer = setTimeout(captureNow, 250);
+}
+
+function captureNow() {
+  if (!plane || !imgW || !imgH) return;
+
+  // Render the plane only (hide the gizmo) at the native image resolution, with
+  // a transparent background, into the same renderer, then read it back.
+  const prevSize = new THREE.Vector2();
+  renderer.getSize(prevSize);
+  const prevRatio = renderer.getPixelRatio();
+  const helper = gizmo.getHelper ? gizmo.getHelper() : gizmo;
+  const gizmoVisible = helper.visible;
+
+  helper.visible = false;
+  renderer.setPixelRatio(1);
+  renderer.setSize(imgW, imgH, false);
+
+  const capCam = new THREE.PerspectiveCamera(FOV, imgW / imgH, 0.01, 100);
+  capCam.position.set(0, 0, DIST);
+  capCam.lookAt(0, 0, 0);
+
+  renderer.render(scene, capCam);
+  const dataUrl = renderer.domElement.toDataURL('image/png');
+
+  // Restore the interactive view.
+  helper.visible = gizmoVisible;
+  renderer.setPixelRatio(prevRatio);
+  renderer.setSize(prevSize.x, prevSize.y, false);
+
+  parent.postMessage({ type: 'yak_plane_capture', b64: dataUrl }, '*');
+}
+
+// ── Toolbar ────────────────────────────────────────────────────────────────────
+document.getElementById('btn-reset').addEventListener('click', () => {
+  if (!plane) return;
+  plane.rotation.set(0, 0, 0);
+  scheduleCapture();
+});
+const snap = (axis) => () => {
+  if (!plane) return;
+  plane.rotation[axis] += Math.PI / 2;
+  scheduleCapture();
+};
+document.getElementById('btn-x').addEventListener('click', snap('x'));
+document.getElementById('btn-y').addEventListener('click', snap('y'));
+document.getElementById('btn-z').addEventListener('click', snap('z'));
+document.getElementById('btn-rotate').addEventListener('click', () => {
+  gizmo.enabled = !gizmo.enabled;
+  document.getElementById('btn-rotate').classList.toggle('active', gizmo.enabled);
+});
+
+// ── Messages from the node ────────────────────────────────────────────────────
+window.addEventListener('message', (event) => {
+  const data = event.data;
+  if (!data || data.type !== 'yak_plane_set_texture') return;
+  setTexture(data.url, data.width, data.height);
+});
+
+init();
+</script>
+</body>
+</html>

@@ -25,6 +25,9 @@ from .nodes_matanyone import (
 from .nodes_rmbg import (
     YAKBackgroundRemove,
 )
+from .nodes_plane import (
+    YAKPlaneRotate,
+)
 
 # Register /yak/viewfile route on import
 from . import server_routes  # noqa: F401
@@ -48,6 +51,8 @@ NODE_CLASS_MAPPINGS = {
     "YAKMatAnyoneCheckSetup":   YAKMatAnyoneCheckSetup,
     # Background Remove
     "YAKBackgroundRemove":      YAKBackgroundRemove,
+    # Plane Rotate
+    "YAKPlaneRotate":           YAKPlaneRotate,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -69,6 +74,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "YAKMatAnyoneCheckSetup":   "YAK MatAnyone Check Setup",
     # Background Remove
     "YAKBackgroundRemove":      "YAK Background Remove",
+    # Plane Rotate
+    "YAKPlaneRotate":           "YAK Plane Rotate",
 }
 
 WEB_DIRECTORY = "./web"
